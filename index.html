@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Bulls Eye — Wheel Desk</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+  :root{ --ink:#17191C; --paper:#EFF1ED; --card:#FFFFFF; --gold:#C9921F; --red:#BF1B2C; --blue:#2B4C6F; --deep:#1B2733; --line:#D8DBD4; --dim:#6B7069; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { background: var(--paper); color: var(--ink); font-family: 'IBM Plex Mono', ui-monospace, monospace; -webkit-text-size-adjust: 100%; }
+  input, button, select { font-family: 'IBM Plex Mono', monospace; }
+  input[type=range]{ -webkit-appearance:none; appearance:none; width:100%; height:2px; background:var(--line); border-radius:2px; outline:none; margin:6px 0; }
+  input[type=range]::-webkit-slider-thumb{ -webkit-appearance:none; appearance:none; width:18px; height:18px; border-radius:50%; background:var(--ink); border:3px solid var(--paper); box-shadow:0 0 0 1.5px var(--ink); cursor:pointer; }
+  input[type=range]::-moz-range-thumb{ width:16px; height:16px; border-radius:50%; background:var(--ink); border:3px solid var(--paper); box-shadow:0 0 0 1.5px var(--ink); cursor:pointer; }
+  input[type=range]:focus-visible::-webkit-slider-thumb{ box-shadow:0 0 0 2.5px var(--red); }
+  .num-in{ font-family:'IBM Plex Mono',monospace; font-weight:600; }
+  .num-in:focus{ outline:2px solid var(--red); outline-offset:1px; }
+  .card{ background:var(--card); border:1.5px solid var(--line); border-radius:10px; padding:14px; margin-bottom:16px; }
+  .card-ink{ border-color:var(--ink); }
+  .grp{ font-size:11px; letter-spacing:.12em; color:var(--dim); margin-bottom:10px; }
+  button{ transition: all .15s; }
+  @media (prefers-reduced-motion: reduce){ *{ transition:none !important; } }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+"use strict";
+(function () {
+  // ---------------- design tokens ----------------
+  var C = { ink:"#17191C", paper:"#EFF1ED", card:"#FFFFFF", gold:"#C9921F", red:"#BF1B2C", blue:"#2B4C6F", deep:"#1B2733", line:"#D8DBD4", dim:"#6B7069" };
+  var ARCHIVO = "'Archivo', sans-serif";
+
+  // ---------------- helpers ----------------
+  function fmtMoney(n){ if(!isFinite(n)) return "—"; var a=Math.abs(n); if(a>=1e6) return "$"+(n/1e6).toFixed(2).replace(/\.00$/,"")+"M"; if(a>=1e3) return "$"+(n/1e3).toFixed(1).replace(/\.0$/,"")+"k"; return "$"+Math.round(n).toLocaleString(); }
+  function fmtMoneyFull(n){ return !isFinite(n)?"—":"$"+Math.round(n).toLocaleString(); }
+  function fmtBig(n){ if(!isFinite(n)) return "—"; var a=Math.abs(n); if(a>=1e12) return "$"+(n/1e12).toFixed(2)+"T"; if(a>=1e9) return "$"+(n/1e9).toFixed(2)+"B"; if(a>=1e6) return "$"+(n/1e6).toFixed(1)+"M"; return "$"+Math.round(n).toLocaleString(); }
+  function fmtPct(n,d){ if(d==null)d=2; return !isFinite(n)?"—":n.toFixed(d)+"%"; }
+  function num(v){ var n=parseFloat(v); return isFinite(n)?n:0; }
+  function isN(x){ return typeof x==="number" && isFinite(x); }
+  function esc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+  function row(dot,label,value){ return '<div style="display:flex;align-items:center;gap:8px;padding:3.5px 0"><span style="width:8px;height:8px;border-radius:50%;background:'+dot+';flex-shrink:0"></span><span style="flex:1;color:#454A44">'+label+'</span><span style="font-weight:600;white-space:nowrap">'+value+'</span></div>'; }
+  var store = {
+    get:function(k,fb){ try{ var v=window.localStorage.getItem(k); return v?JSON.parse(v):fb; }catch(e){ return fb; } },
+    set:function(k,v){ try{ window.localStorage.setItem(k,JSON.stringify(v)); }catch(e){} }
+  };
+
+  // ==================================================================
+  // CALCULATOR
+  // ==================================================================
+  var PRESETS = {
+    safe:{ label:"Safe", weeklyPct:0.25, breachRate:30, rollRate:0, rollEff:65, rollMonths:1.5, deepPct:100, lockShallow:6, lockDeep:18, yieldShallow:4, yieldDeep:1, slotSize:30000, posCap:5 },
+    realistic:{ label:"Realistic", weeklyPct:0.25, breachRate:30, rollRate:60, rollEff:65, rollMonths:1.5, deepPct:15, lockShallow:3, lockDeep:20, yieldShallow:4, yieldDeep:1, slotSize:30000, posCap:5 },
+    aggressive:{ label:"Aggressive", weeklyPct:0.45, breachRate:45, rollRate:70, rollEff:60, rollMonths:1.5, deepPct:25, lockShallow:3, lockDeep:24, yieldShallow:4, yieldDeep:1, slotSize:30000, posCap:7 }
+  };
+  var GROUPS = [
+    { title:"PREMIUM", fields:[
+      { key:"weeklyPct", label:"Premium per week", sub:"% of deployed (higher = higher delta / IV)", min:0.05, max:1, step:0.01, unit:"%" },
+      { key:"breachRate", label:"Breach rate", sub:"% of positions ITM per monthly cycle", min:0, max:100, step:1, unit:"%" } ] },
+    { title:"ROLLING", fields:[
+      { key:"rollRate", label:"Breaches rolled", sub:"% of breaches rolled instead of assigned", min:0, max:100, step:5, unit:"%" },
+      { key:"rollEff", label:"Rolled premium efficiency", sub:"% of normal weekly premium while rolling", min:20, max:100, step:5, unit:"%" },
+      { key:"rollMonths", label:"Avg roll duration", sub:"extra months a rolled campaign runs", min:0.5, max:6, step:0.5, unit:"mo" } ] },
+    { title:"ASSIGNMENTS — TWO COHORTS", fields:[
+      { key:"deepPct", label:"Deep assignments", sub:"% of assignments far underwater", min:0, max:100, step:5, unit:"%" },
+      { key:"lockShallow", label:"Shallow recovery", sub:"months locked, near basis", min:0.5, max:24, step:0.5, unit:"mo" },
+      { key:"lockDeep", label:"Deep recovery", sub:"months locked, far underwater", min:1, max:60, step:1, unit:"mo" },
+      { key:"yieldShallow", label:"Shallow locked yield", sub:"%/yr — calls near basis + dividends", min:0, max:12, step:0.5, unit:"%" },
+      { key:"yieldDeep", label:"Deep locked yield", sub:"%/yr — dividends + scraps", min:0, max:8, step:0.5, unit:"%" } ] },
+    { title:"PACKAGING", fields:[
+      { key:"slotSize", label:"Slot size", sub:"collateral per position", min:5000, max:100000, step:1000, unit:"$" },
+      { key:"posCap", label:"Position cap", sub:"max % of account per position", min:1, max:20, step:0.5, unit:"%" } ] }
+  ];
+
+  function calcCompute(s){
+    var weeklyPct=num(s.weeklyPct), breach=num(s.breachRate)/100, rollRate=num(s.rollRate)/100, rollEff=num(s.rollEff)/100, rollMonths=num(s.rollMonths);
+    var deep=num(s.deepPct)/100, Ls=num(s.lockShallow), Ld=num(s.lockDeep), rS=num(s.yieldShallow)/100, rD=num(s.yieldDeep)/100, slotSize=num(s.slotSize), posCap=num(s.posCap);
+    var fRoll=Math.min(0.9, breach*rollRate*rollMonths);
+    var premiumFactor=(1-fRoll)+fRoll*rollEff;
+    var rAGross=(weeklyPct/100)*52;
+    var rA=rAGross*premiumFactor;
+    var a=breach*(1-rollRate);
+    var Ms=a*(1-deep)*Ls, Md=a*deep*Ld, M=Ms+Md;
+    var lockedCoef=Ms*rS+Md*rD;
+    var y=(rA+lockedCoef)/(1+M);
+    var total, income;
+    if(s.mode==="income"){ income=num(s.targetIncome); total=y>0?income/y:Infinity; }
+    else { total=num(s.accountSize); income=total*y; }
+    var active=total/(1+M), lockedS=Ms*active, lockedD=Md*active, premiumIncome=active*rA;
+    var weekly=income/52, perSlot=slotSize*(1+M), stage1=perSlot, stage2=2*perSlot;
+    var stage3=posCap>0?slotSize/(posCap/100):Infinity;
+    var slotsAtStage3=perSlot>0?Math.max(1,Math.floor(stage3/perSlot)):0;
+    var slotsNow=slotSize>0?Math.floor(active/slotSize):0;
+    var posPctNow=total>0?(slotSize/total)*100:0;
+    return { rAGross:rAGross, rA:rA, fRoll:fRoll, a:a, M:M, Ms:Ms, Md:Md, y:y, total:total, income:income, active:active, lockedS:lockedS, lockedD:lockedD, premiumIncome:premiumIncome, weekly:weekly, perSlot:perSlot, stage1:stage1, stage2:stage2, stage3:stage3, slotsAtStage3:slotsAtStage3, slotsNow:slotsNow, posPctNow:posPctNow, slotSize:slotSize, posCap:posCap };
+  }
+  function projCompute(c,s){
+    var y=c.y, start=num(s.startAccount), contrib=num(s.weeklyContrib), years=Math.max(0,Math.min(50,num(s.projYears))), weeks=Math.round(years*52);
+    var rw=Math.pow(1+Math.max(y,-0.99),1/52)-1, bal=start, series=[bal];
+    for(var w=1;w<=weeks;w++){ bal=bal*(1+rw)+contrib; if(w%52===0) series.push(bal); }
+    var end=bal, contributed=start+contrib*weeks, growth=end-contributed, endIncome=end*y, crossYear=null;
+    for(var i=0;i<series.length;i++){ if(series[i]>=c.stage3){ crossYear=i; break; } }
+    return { end:end, contributed:contributed, growth:growth, endIncome:endIncome, series:series, crossYear:crossYear, years:years };
+  }
+
+  function headlineHTML(s,c){
+    var R=78, t=c.total;
+    var rAct=t>0?Math.sqrt(c.active/t)*R:0, rActS=t>0?Math.sqrt((c.active+c.lockedS)/t)*R:0;
+    var rings='<svg width="120" height="120" viewBox="0 0 170 170" style="flex-shrink:0" role="img" aria-label="Capital structure rings">'+
+      '<circle cx="85" cy="85" r="'+R+'" fill="'+C.deep+'"/>'+
+      '<circle cx="85" cy="85" r="'+rActS+'" fill="'+C.blue+'"/>'+
+      '<circle cx="85" cy="85" r="'+rAct+'" fill="'+C.gold+'"/>'+
+      '<circle cx="85" cy="85" r="'+R+'" fill="none" stroke="'+C.ink+'" stroke-width="2"/>'+
+      '<circle cx="85" cy="85" r="2.5" fill="'+C.red+'"/></svg>';
+    var big = s.mode==="income"?fmtMoney(c.total):fmtMoney(c.income);
+    var sub = s.mode==="income" ? (fmtMoneyFull(c.income)+" / yr · "+fmtMoney(c.weekly)+" / wk") : (fmtMoney(c.weekly)+" / wk · on "+fmtMoney(c.total));
+    var out = '<div style="display:flex;align-items:center;gap:16px">'+rings+
+      '<div style="flex:1">'+
+      '<div style="font-size:10.5px;color:'+C.dim+';letter-spacing:.12em">'+(s.mode==="income"?"TOTAL ACCOUNT NEEDED":"YEARLY INCOME")+'</div>'+
+      '<div style="font-family:'+ARCHIVO+';font-weight:800;font-size:34px;letter-spacing:-.02em;line-height:1.1;color:'+C.red+'">'+big+'</div>'+
+      '<div style="font-size:11.5px;color:'+C.dim+';margin-top:4px">'+sub+'</div>'+
+      '<div style="margin-top:6px;display:inline-block;padding:3px 8px;border-radius:5px;background:#F3EBDA;border:1px solid '+C.gold+';font-size:12.5px;font-weight:600">yearly return: '+fmtPct(c.y*100)+' of account</div>'+
+      '</div></div>'+
+      '<div style="margin-top:14px;border-top:1px solid '+C.line+';padding-top:10px;font-size:12.5px">'+
+      row(C.gold,"Active (incl. rolling)", fmtMoney(c.active)+" → "+fmtMoney(c.premiumIncome)+"/yr")+
+      row(C.blue,"Locked · shallow", fmtMoney(c.lockedS))+
+      row(C.deep,"Locked · deep", fmtMoney(c.lockedD))+
+      row(C.red,"Effective premium rate", fmtPct(c.rA*100,1)+" (gross "+fmtPct(c.rAGross*100,1)+")")+
+      row(C.ink,"Capital rolling right now", fmtPct(c.fRoll*100,0))+
+      row(C.ink,"Assignment rate / M", fmtPct(c.a*100,1)+"/mo · M "+c.M.toFixed(2))+
+      (s.mode==="account"? row(C.ink,"Slots funded", c.slotsNow+" × "+fmtMoney(c.slotSize)+" · pos "+fmtPct(c.posPctNow,1)) : "")+
+      '</div>';
+    return out;
+  }
+  function sparklineHTML(p){
+    var s=p.series, max=Math.max.apply(null,s.concat([1])), pts=[];
+    for(var i=0;i<s.length;i++){ var x=s.length>1?(i/(s.length-1))*296+2:150; var yv=66-(s[i]/max)*58; pts.push(x+","+yv); }
+    var area="2,66 "+pts.join(" ")+" 298,66";
+    var line = (p.crossYear!==null && s.length>1) ? '<line x1="'+((p.crossYear/(s.length-1))*296+2)+'" y1="6" x2="'+((p.crossYear/(s.length-1))*296+2)+'" y2="66" stroke="'+C.red+'" stroke-width="1.5" stroke-dasharray="4 3"/>' : "";
+    return '<svg width="100%" height="72" viewBox="0 0 300 72" preserveAspectRatio="none" role="img" aria-label="Projected account growth"><polygon points="'+area+'" fill="'+C.gold+'" opacity="0.18"/><polyline points="'+pts.join(" ")+'" fill="none" stroke="'+C.gold+'" stroke-width="2.5"/>'+line+'</svg>';
+  }
+  function projOutHTML(c,p){
+    return sparklineHTML(p)+'<div style="margin-top:10px;font-size:12.5px">'+
+      row(C.gold,"Account after "+p.years+" yr"+(p.years===1?"":"s"), fmtMoney(p.end))+
+      row(C.red,"Income at that size", fmtMoney(p.endIncome)+"/yr · "+fmtMoney(p.endIncome/52)+"/wk")+
+      row(C.ink,"You put in / returns added", fmtMoney(p.contributed)+" / "+fmtMoney(p.growth))+
+      row(C.ink,"Stage III reached", p.crossYear===null?"not in horizon":p.crossYear===0?"at start":"year "+p.crossYear)+
+      '</div>';
+  }
+  function ladderHTML(c){
+    var stages=[
+      {n:"I",name:"Sustainable",amount:c.stage1,note:"1 slot · position = "+fmtPct((c.slotSize/c.stage1)*100,1)+" of account"},
+      {n:"II",name:"Two slots",amount:c.stage2,note:"single-name risk cut in half"},
+      {n:"III",name:"Cap compliant",amount:c.stage3,note:"positions ≤ "+c.posCap+"% · fits ~"+c.slotsAtStage3+" slot"+(c.slotsAtStage3===1?"":"s")}
+    ];
+    var h='<div class="grp">STAGE LADDER · '+fmtMoney(c.perSlot)+' PER SLOT ('+(1+c.M).toFixed(1)+'×)</div>';
+    for(var i=0;i<stages.length;i++){ var s=stages[i]; var col=i===2?C.red:C.ink;
+      h+='<div style="display:flex;gap:12px;align-items:center;padding:9px 0;border-top:'+(i>0?"1px solid "+C.line:"none")+'">'+
+        '<div style="width:30px;height:30px;border-radius:50%;flex-shrink:0;border:2px solid '+col+';display:flex;align-items:center;justify-content:center;font-family:'+ARCHIVO+';font-weight:700;font-size:13px;color:'+col+'">'+s.n+'</div>'+
+        '<div style="flex:1"><div style="font-size:12.5px;font-weight:600">'+s.name+'</div><div style="font-size:10.5px;color:'+C.dim+'">'+s.note+'</div></div>'+
+        '<div style="font-family:'+ARCHIVO+';font-weight:800;font-size:17px">'+fmtMoney(s.amount)+'</div></div>';
+    }
+    return h;
+  }
+  function presetsHTML(s){
+    var h='<div style="display:flex;gap:8px;margin-bottom:16px" id="calc-presets">';
+    var ids=["safe","realistic","aggressive"];
+    for(var i=0;i<ids.length;i++){ var id=ids[i], on=s.activePreset===id;
+      h+='<button onclick="WD.applyPreset(\''+id+'\')" style="flex:1;padding:9px 0;font-size:12px;font-weight:600;cursor:pointer;border-radius:6px;border:1.5px solid '+(on?C.ink:C.line)+';background:'+(on?C.ink:C.card)+';color:'+(on?"#fff":C.ink)+'">'+PRESETS[id].label+'</button>';
+    }
+    return h+'</div>';
+  }
+  function renderCalc(){
+    var s=state.calc, c=calcCompute(s), p=projCompute(c,s);
+    var h='<div style="font-size:10.5px;color:'+C.dim+';letter-spacing:.14em;margin-bottom:14px">TWO-COHORT RECOVERY · ROLLING MODEL</div>';
+    h+=presetsHTML(s);
+    // mode + target
+    h+='<div class="card">'+
+      '<div style="display:flex;margin-bottom:12px;border:1.5px solid '+C.ink+';border-radius:6px;overflow:hidden">'+
+      '<button onclick="WD.setMode(\'income\')" style="flex:1;padding:10px 0;font-size:12px;font-weight:600;border:none;cursor:pointer;background:'+(s.mode==="income"?C.ink:"#fff")+';color:'+(s.mode==="income"?"#fff":C.ink)+'">Income → Account</button>'+
+      '<button onclick="WD.setMode(\'account\')" style="flex:1;padding:10px 0;font-size:12px;font-weight:600;border:none;cursor:pointer;background:'+(s.mode==="account"?C.ink:"#fff")+';color:'+(s.mode==="account"?"#fff":C.ink)+'">Account → Income</button>'+
+      '</div>'+
+      '<label style="display:block"><span style="font-size:11px;color:'+C.dim+';letter-spacing:.08em">'+(s.mode==="income"?"DESIRED YEARLY INCOME":"TOTAL ACCOUNT VALUE")+'</span>'+
+      '<div style="display:flex;align-items:center;gap:6px;margin-top:4px"><span style="font-size:20px;font-weight:600">$</span>'+
+      '<input class="num-in" type="number" id="calc-target" value="'+(s.mode==="income"?s.targetIncome:s.accountSize)+'" min="0" step="'+(s.mode==="income"?5000:25000)+'" oninput="WD.setTarget(this.value)" style="font-size:22px;width:100%;border:none;border-bottom:2px solid '+C.ink+';background:transparent;padding:2px 0"></div></label></div>';
+    // headline
+    h+='<div class="card card-ink" id="calc-headline" style="padding:18px 16px">'+headlineHTML(s,c)+'</div>';
+    // groups
+    for(var g=0;g<GROUPS.length;g++){ var grp=GROUPS[g];
+      h+='<div class="card"><div class="grp">'+grp.title+'</div>';
+      for(var f=0;f<grp.fields.length;f++){ var fl=grp.fields[f]; var val=s[fl.key];
+        h+='<div style="margin-bottom:14px"><div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">'+
+          '<div><div style="font-size:12.5px;font-weight:600">'+fl.label+'</div><div style="font-size:10.5px;color:'+C.dim+'">'+fl.sub+'</div></div>'+
+          '<div style="display:flex;align-items:baseline;gap:3px">'+(fl.unit==="$"?'<span style="font-size:13px;font-weight:600">$</span>':'')+
+          '<input class="num-in" type="number" id="f-'+fl.key+'-num" value="'+val+'" min="'+fl.min+'" max="'+fl.max+'" step="'+fl.step+'" oninput="WD.setNum(\''+fl.key+'\',this.value)" style="width:'+(fl.unit==="$"?78:58)+'px;font-size:15px;text-align:right;border:none;border-bottom:1.5px solid '+C.ink+';background:transparent;padding:1px 2px">'+
+          (fl.unit!=="$"?'<span style="font-size:12px;color:'+C.dim+'">'+fl.unit+'</span>':'')+'</div></div>'+
+          '<input type="range" id="f-'+fl.key+'-range" value="'+val+'" min="'+fl.min+'" max="'+fl.max+'" step="'+fl.step+'" oninput="WD.setField(\''+fl.key+'\',this.value)" aria-label="'+fl.label+'"></div>';
+      }
+      h+='</div>';
+    }
+    // projection
+    h+='<div class="card card-ink"><div class="grp">GROWTH PROJECTION · PREMIUMS REINVESTED</div>'+
+      '<div style="display:flex;gap:10px;margin-bottom:12px">'+
+      projInput("START", "startAccount", s.startAccount, 5000, true)+
+      projInput("ADD / WK", "weeklyContrib", s.weeklyContrib, 50, true)+
+      projInput("YEARS", "projYears", s.projYears, 1, false)+
+      '</div><div id="calc-projout">'+projOutHTML(c,p)+'</div></div>';
+    // ladder
+    h+='<div class="card" id="calc-ladder">'+ladderHTML(c)+'</div>';
+    h+='<div style="font-size:10.5px;color:'+C.dim+';line-height:1.7;padding:0 4px">assignments = breach × (1 − rolled) · M = Σ cohort(rate × lock) · rolled capital earns thinned premium · y = (r_eff + locked income) ÷ (1 + M). Steady-state planning math, not financial advice — cluster years arrive in bursts; pad accordingly.</div>';
+    document.getElementById("body").innerHTML=h;
+  }
+  function projInput(label,key,val,step,money){
+    return '<label style="flex:1"><span style="font-size:10px;color:'+C.dim+';letter-spacing:.1em">'+label+'</span>'+
+      '<div style="display:flex;align-items:baseline;gap:2px;border-bottom:1.5px solid '+C.ink+'">'+(money?'<span style="font-size:12px;font-weight:600">$</span>':'')+
+      '<input class="num-in" type="number" value="'+val+'" min="0" step="'+step+'" oninput="WD.setProj(\''+key+'\',this.value)" style="width:100%;font-size:15px;border:none;background:transparent;padding:3px 0"></div></label>';
+  }
+  function updateCalcOutputs(){
+    var s=state.calc, c=calcCompute(s), p=projCompute(c,s);
+    var hd=document.getElementById("calc-headline"); if(hd) hd.innerHTML=headlineHTML(s,c);
+    var po=document.getElementById("calc-projout"); if(po) po.innerHTML=projOutHTML(c,p);
+    var ld=document.getElementById("calc-ladder"); if(ld) ld.innerHTML=ladderHTML(c);
+  }
+
+  // ==================================================================
+  // COMPANY
+  // ==================================================================
+  function band(x,e){ for(var i=0;i<e.length;i++){ if(x>=e[i][0]) return e[i][1]; } return e[e.length-1][1]; }
+  function scoreStrength(m){
+    var checks=[];
+    var ni=m.net_income, ni_ok=isN(ni)&&ni>0;
+    checks.push({w:0.16, v:isN(ni)?(ni_ok?1:0):null, name:"Profitable", ok:ni_ok});
+    var nm=m.net_margin;
+    checks.push({w:0.12, v:!isN(nm)?null:band(nm,[[0.15,1],[0.05,0.7],[0,0.4],[-1e9,0]]), name:"Healthy margin", ok:isN(nm)&&nm>0});
+    var ic=m.interest_coverage;
+    checks.push({w:0.22, v:!isN(ic)?null:band(ic,[[8,1],[4,0.8],[2,0.5],[1,0.25],[-1e9,0]]), name:"Earnings cover its interest", ok:isN(ic)&&ic>=4});
+    var ndf=m.net_debt_to_fcf, ndv, ndok;
+    if(!isN(ndf)){ndv=null;ndok=false;} else if(ndf<=0){ndv=1;ndok=true;} else {ndv=band(ndf,[[6,0.1],[3.5,0.3],[2,0.55],[1,0.8],[-1e9,1]]);ndok=ndf<=2;}
+    checks.push({w:0.25, v:ndv, name:"Debt payable from cash flow", ok:ndok});
+    var fcf=m.fcf, fcf_ok=isN(fcf)&&fcf>0;
+    checks.push({w:0.15, v:isN(fcf)?(fcf_ok?1:0):null, name:"Positive free cash flow", ok:fcf_ok});
+    var rg=m.revenue_growing;
+    checks.push({w:0.10, v:rg==null?null:(rg?1:0), name:"Revenue growing", ok:!!rg});
+    var numv=0; for(var i=0;i<checks.length;i++){ numv+=checks[i].w*(checks[i].v==null?0.5:checks[i].v); }
+    var grade=Math.round(1000*numv)/10;
+    var label=grade>=80?"Fortress":grade>=65?"Strong":grade>=50?"Solid":grade>=35?"Fragile":"Weak";
+    return { grade:grade, label:label, checks:checks.map(function(c){ return {name:c.name,ok:c.ok,present:c.v!=null}; }) };
+  }
+  function scoreValuation(pe,ps){
+    var v;
+    if(!isN(pe)) v=0.5; else if(pe<=0) v=0.25; else v=band(pe,[[80,0.10],[45,0.28],[30,0.45],[22,0.62],[15,0.80],[0,1.0]]);
+    if(isN(ps)&&ps>0){ var pv=band(ps,[[15,0.1],[8,0.35],[4,0.6],[2,0.85],[0,1.0]]); v=0.7*v+0.3*pv; }
+    var grade=Math.round(1000*v)/10;
+    var label=grade>=80?"Cheap":grade>=60?"Fair":grade>=45?"Rich":grade>=25?"Expensive":"Very expensive";
+    return { grade:grade, label:label };
+  }
+  function analyze(f){
+    var nan=NaN;
+    var net_margin=(isN(f.netIncome)&&isN(f.revenue)&&f.revenue>0)?f.netIncome/f.revenue:nan;
+    var interest_coverage;
+    if(isN(f.opIncome)&&isN(f.interestExpense)&&f.interestExpense>0) interest_coverage=f.opIncome/f.interestExpense;
+    else if(isN(f.opIncome)&&f.opIncome>0&&isN(f.interestExpense)&&f.interestExpense===0) interest_coverage=999;
+    else interest_coverage=nan;
+    var net_debt=isN(f.netDebt)?f.netDebt:((isN(f.totalDebt)&&isN(f.cash))?f.totalDebt-f.cash:nan);
+    var net_debt_to_fcf;
+    if(isN(net_debt)){ if(net_debt<=0) net_debt_to_fcf=0; else if(isN(f.fcf)&&f.fcf>0) net_debt_to_fcf=net_debt/f.fcf; else net_debt_to_fcf=99; } else net_debt_to_fcf=nan;
+    var pe=(isN(f.marketCap)&&isN(f.netIncome)&&f.netIncome!==0)?f.marketCap/f.netIncome:nan;
+    var ps=(isN(f.marketCap)&&isN(f.revenue)&&f.revenue>0)?f.marketCap/f.revenue:nan;
+    var debt_to_equity=(isN(f.totalDebt)&&isN(f.equity)&&f.equity>0)?f.totalDebt/f.equity:nan;
+    var cash_to_debt=(isN(f.cash)&&isN(f.totalDebt)&&f.totalDebt>0)?f.cash/f.totalDebt:((isN(f.cash)&&f.cash>0)?999:nan);
+    var dy=(isN(f.lastDiv)&&f.lastDiv>0&&isN(f.price)&&f.price>0)?f.lastDiv/f.price:0;
+    var rev=f.revSeries||[];
+    var revenue_growing=rev.length>=2 && rev[rev.length-1][1]>rev[0][1];
+    var revenue_recent_pct=(rev.length>=2 && rev[rev.length-2][1])?rev[rev.length-1][1]/rev[rev.length-2][1]-1:null;
+    var metrics={ net_income:f.netIncome, net_margin:net_margin, interest_coverage:interest_coverage, net_debt_to_fcf:net_debt_to_fcf, fcf:f.fcf, revenue_growing:revenue_growing };
+    var strength=scoreStrength(metrics), valuation=scoreValuation(pe,ps);
+    var sg=strength.grade, vg=valuation.grade, verdict;
+    if(sg>=65&&vg<45) verdict="Financially strong, but richly valued — likely survives a drop, but at this price a fall can take a long time to recover (long capital lockup).";
+    else if(sg>=65&&vg>=60) verdict="Strong and reasonably priced — the kind of company that survives dips and tends to climb back.";
+    else if(sg<50) verdict="Financial strength is shaky — getting assigned here carries real 'never recovers' risk.";
+    else verdict="Mixed — weigh the strength and valuation reads below before you'd want to own it.";
+    return { name:f.name, sector:f.sector, price:f.price, market_cap:f.marketCap, cash:f.cash, total_debt:f.totalDebt, net_debt:net_debt, debt_to_equity:debt_to_equity, cash_to_debt:cash_to_debt, pe:pe, ps:ps, net_margin:net_margin, interest_coverage:interest_coverage, fcf:f.fcf, dividend_yield:dy, pays_dividend:dy>0, last_div:f.lastDiv, revenue_series:rev, revenue_growing:revenue_growing, revenue_recent_pct:revenue_recent_pct, strength_grade:strength.grade, strength_label:strength.label, checks:strength.checks, valuation_grade:valuation.grade, valuation_label:valuation.label, verdict:verdict };
+  }
+  var STRENGTH_COLOR={ Fortress:"#1a7f37", Strong:"#3fb950", Solid:"#C9921F", Fragile:"#db8b2a", Weak:"#cf222e" };
+  var VAL_COLOR={ Cheap:"#1a7f37", Fair:"#3fb950", Rich:"#C9921F", Expensive:"#db8b2a", "Very expensive":"#cf222e" };
+  var SAMPLE=analyze({ name:"Apple Inc. (sample)", sector:"Technology", price:229.87, marketCap:3.48e12, lastDiv:1.0, revenue:3.909e11, netIncome:9.37e10, opIncome:1.234e11, interestExpense:0, cash:6.55e10, totalDebt:1.06e11, netDebt:4.05e10, equity:5.69e10, fcf:1.087e11, revSeries:[["2020",2.745e11],["2021",3.658e11],["2022",3.943e11],["2023",3.832e11],["2024",3.909e11]] });
+
+  var FMP="https://financialmodelingprep.com/stable";
+  function pick(o){ if(!o) return NaN; for(var i=1;i<arguments.length;i++){ var k=arguments[i]; if(o[k]!=null&&isFinite(Number(o[k]))) return Number(o[k]); } return NaN; }
+  function useProxy(){ return location.hostname==="localhost"||location.hostname==="127.0.0.1"; }
+  function fetchFundamentals(sym,key){
+    var local=useProxy();
+    function q(ep,extra){
+      if(local){ return "fmp?endpoint="+encodeURIComponent(ep)+"&symbol="+encodeURIComponent(sym)+(key?"&apikey="+encodeURIComponent(key):"")+(extra||""); }
+      return FMP+"/"+ep+"?symbol="+encodeURIComponent(sym)+"&apikey="+encodeURIComponent(key)+(extra||"");
+    }
+    function gj(u){ return fetch(u).then(function(r){ return r.text().then(function(t){ var j=null; try{ j=JSON.parse(t); }catch(e){} if(!r.ok) throw new Error((j&&(j["Error Message"]||j.error))||("HTTP "+r.status)); if(j&&(j["Error Message"]||j.error)) throw new Error(j["Error Message"]||j.error); return j; }); }); }
+    return Promise.allSettled([ gj(q("profile")), gj(q("income-statement","&period=annual&limit=6")), gj(q("balance-sheet-statement","&period=annual&limit=1")), gj(q("cash-flow-statement","&period=annual&limit=1")) ])
+      .then(function(res){
+        var prof=res[0].status==="fulfilled"?res[0].value:null;
+        var inc =res[1].status==="fulfilled"?res[1].value:null;
+        var bs  =res[2].status==="fulfilled"?res[2].value:null;
+        var cf  =res[3].status==="fulfilled"?res[3].value:null;
+        if(!prof&&!inc&&!bs&&!cf){ var rr=res[0].reason; throw new Error((rr&&rr.message)||"no data"); }
+        var missing=[]; if(!inc) missing.push("revenue & earnings"); if(!bs) missing.push("cash & debt"); if(!cf) missing.push("free cash flow");
+        var p0=Array.isArray(prof)?prof[0]:prof, i0=(inc||[])[0]||{}, b0=(bs||[])[0]||{}, c0=(cf||[])[0]||{};
+        var fcf=pick(c0,"freeCashFlow");
+        if(!isN(fcf)){ var ocf=pick(c0,"operatingCashFlow","netCashProvidedByOperatingActivities"), cap=pick(c0,"capitalExpenditure"); if(isN(ocf)&&isN(cap)) fcf=ocf+cap; }
+        var revSeries=Array.isArray(inc)?inc.slice().reverse().map(function(r){ return [String(r.date||"").slice(0,4), pick(r,"revenue")]; }).filter(function(x){ return isN(x[1]); }):[];
+        var out=analyze({ name:(p0&&p0.companyName)||sym, sector:(p0&&p0.sector)||"—", price:pick(p0,"price"), marketCap:pick(p0,"marketCap","mktCap"), lastDiv:pick(p0,"lastDiv"), revenue:pick(i0,"revenue"), netIncome:pick(i0,"netIncome"), opIncome:pick(i0,"operatingIncome"), interestExpense:pick(i0,"interestExpense"), cash:pick(b0,"cashAndCashEquivalents","cashAndShortTermInvestments"), totalDebt:pick(b0,"totalDebt"), netDebt:pick(b0,"netDebt"), equity:pick(b0,"totalStockholdersEquity","totalEquity"), fcf:fcf, revSeries:revSeries });
+        out._missing=missing;
+        return out;
+      });
+  }
+
+  function scoreCard(title,label,grade,color){
+    return '<div style="flex:1;text-align:center;padding:12px 8px;border-radius:10px;background:'+color+';color:#fff">'+
+      '<div style="font-size:10.5px;opacity:.85;letter-spacing:.08em">'+title+'</div>'+
+      '<div style="font-family:'+ARCHIVO+';font-weight:800;font-size:20px;margin:2px 0;line-height:1.1">'+label+'</div>'+
+      '<div style="font-size:12px;opacity:.9">'+grade+'/100</div></div>';
+  }
+  function fact(label,value,sub){
+    return '<div style="background:'+C.card+';border:1.5px solid '+C.line+';border-radius:9px;padding:10px 11px">'+
+      '<div style="font-size:9.5px;color:'+C.dim+';letter-spacing:.09em;text-transform:uppercase">'+label+'</div>'+
+      '<div style="font-family:'+ARCHIVO+';font-weight:800;font-size:18px;margin-top:3px;letter-spacing:-.01em">'+value+'</div>'+
+      (sub?'<div style="font-size:10px;color:'+C.dim+';margin-top:2px">'+sub+'</div>':'')+'</div>';
+  }
+  function revChartHTML(series,growing){
+    if(!series||series.length<2) return "";
+    var W=300,H=96,pad=4,n=series.length,max=1;
+    for(var i=0;i<n;i++){ if(series[i][1]>max) max=series[i][1]; }
+    var gap=(W-pad*2)/n, bw=gap*0.62, h='<svg width="100%" viewBox="0 0 '+W+' '+(H+16)+'" role="img" aria-label="Annual revenue">';
+    for(var j=0;j<n;j++){ var bh=(series[j][1]/max)*(H-14); var x=pad+j*gap+(gap-bw)/2; var last=j===n-1;
+      h+='<rect x="'+x+'" y="'+(H-bh)+'" width="'+bw+'" height="'+bh+'" rx="2" fill="'+(last?(growing?C.gold:C.red):"#C9C4B6")+'"></rect>'+
+        '<text x="'+(x+bw/2)+'" y="'+(H+11)+'" text-anchor="middle" font-size="9" fill="'+C.dim+'" font-family="'+"'IBM Plex Mono',monospace"+'">'+series[j][0]+'</text>';
+    }
+    return h+'</svg>';
+  }
+  function companyResultHTML(r){
+    var h='<div style="margin-bottom:12px"><div style="font-family:'+ARCHIVO+';font-weight:800;font-size:22px;letter-spacing:-.02em;line-height:1.1">'+esc(r.name)+'</div>'+
+      '<div style="font-size:11.5px;color:'+C.dim+';margin-top:2px">'+esc(r.sector)+' · '+fmtMoney(r.price)+' · '+fmtBig(r.market_cap)+' mkt cap</div></div>';
+    h+='<div style="display:flex;gap:10px;margin-bottom:12px">'+
+      scoreCard("FINANCIAL STRENGTH", r.strength_label, r.strength_grade, STRENGTH_COLOR[r.strength_label]||C.dim)+
+      scoreCard("VALUATION", r.valuation_label, r.valuation_grade, VAL_COLOR[r.valuation_label]||C.dim)+'</div>';
+    h+='<div style="background:'+C.card+';border:1.5px solid '+C.line+';border-radius:9px;padding:10px 12px;margin-bottom:16px;font-size:12px;color:#454A44;line-height:1.5">'+r.verdict+'</div>';
+    if(r._missing&&r._missing.length){ h+='<div style="background:#FBF3E2;border:1.5px solid '+C.gold+';border-radius:9px;padding:10px 12px;margin-bottom:16px;font-size:11.5px;color:#6b5518;line-height:1.5">Your FMP plan didn\'t return: '+r._missing.join(", ")+'. Those fields show “—” and the scores use what\'s available. Everything else below is live.</div>'; }
+    h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">'+
+      fact("Cash &amp; equivalents", fmtBig(r.cash))+
+      fact("Total debt", fmtBig(r.total_debt))+
+      fact("Net debt", fmtBig(r.net_debt), r.net_debt<=0?"net cash position":"debt beyond cash")+
+      fact("Cash ÷ debt", isN(r.cash_to_debt)?(r.cash_to_debt>=999?"no debt":r.cash_to_debt.toFixed(2)+"×"):"—")+
+      fact("Debt ÷ equity", isN(r.debt_to_equity)?r.debt_to_equity.toFixed(2):"—")+
+      fact("Free cash flow", fmtBig(r.fcf))+
+      fact("P / E", isN(r.pe)?(r.pe<=0?"no earnings":r.pe.toFixed(1)):"—")+
+      fact("P / S", isN(r.ps)?r.ps.toFixed(1):"—")+
+      fact("Net margin", isN(r.net_margin)?fmtPct(r.net_margin*100,1):"—")+
+      fact("Interest coverage", isN(r.interest_coverage)?(r.interest_coverage>=999?"no interest":r.interest_coverage.toFixed(1)+"×"):"—")+
+      '</div>';
+    h+='<div style="background:'+C.card+';border:1.5px solid '+C.line+';border-radius:9px;padding:11px 12px;margin-bottom:16px"><div style="font-size:10.5px;color:'+C.dim+';letter-spacing:.09em">DIVIDEND</div>'+
+      (r.pays_dividend?'<div style="margin-top:3px"><span style="font-family:'+ARCHIVO+';font-weight:800;font-size:18px">'+fmtPct(r.dividend_yield*100,2)+'</span><span style="font-size:12px;color:'+C.dim+';margin-left:8px">≈ '+fmtMoney(r.last_div)+' / share annually</span></div>':'<div style="margin-top:3px;font-size:13px;color:'+C.dim+'">No dividend paid.</div>')+'</div>';
+    h+='<div class="card"><div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px"><div class="grp" style="margin:0">ANNUAL REVENUE</div>'+
+      '<div style="font-size:11.5px;font-weight:600;color:'+(r.revenue_growing?C.gold:C.red)+'">'+(r.revenue_growing?"growing ↗":"flat / declining ↘")+(r.revenue_recent_pct!=null?'<span style="color:'+C.dim+';font-weight:400"> · '+fmtPct(r.revenue_recent_pct*100,1)+' YoY</span>':'')+'</div></div>'+
+      revChartHTML(r.revenue_series, r.revenue_growing)+'</div>';
+    h+='<div class="card"><div class="grp">STRENGTH CHECKS</div>';
+    for(var i=0;i<r.checks.length;i++){ var ch=r.checks[i]; var mk=ch.ok?"✓":ch.present?"✕":"–"; var col=ch.ok?"#1a7f37":ch.present?C.red:C.dim;
+      h+='<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12.5px"><span style="width:16px;text-align:center;color:'+col+';font-weight:700">'+mk+'</span><span style="color:#454A44">'+ch.name+'</span></div>';
+    }
+    h+='</div>';
+    h+='<div style="font-size:10.5px;color:'+C.dim+';line-height:1.7;padding:0 4px">Every number is computed from raw statement lines (revenue, net income, cash, debt, free cash flow) — no vendor pre-calculated ratios. Strength is cash-flow solvency (interest coverage + net-debt-vs-free-cash-flow); current ratio and debt/equity are shown for reference, not scored. Not financial advice.</div>';
+    return h;
+  }
+  function renderCompany(){
+    var s=state.company;
+    var h='<div style="font-size:10.5px;color:'+C.dim+';letter-spacing:.14em;margin-bottom:14px">MEASURABLE COMPANY FACTS · TWO SCORES</div>';
+    h+='<div style="display:flex;gap:8px;margin-bottom:10px">'+
+      '<input class="num-in" id="co-ticker" value="'+esc(s.ticker)+'" placeholder="TICKER" onkeydown="if(event.key===\'Enter\')WD.scan()" oninput="WD.setTicker(this.value)" style="flex:1;font-size:17px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;border:1.5px solid '+C.ink+';border-radius:8px;background:'+C.card+';padding:11px 13px">'+
+      '<button onclick="WD.scan()" style="padding:0 20px;font-size:13px;font-weight:700;cursor:pointer;border-radius:8px;border:1.5px solid '+C.ink+';background:'+C.ink+';color:#fff">'+(s.loading?"…":"Scan")+'</button></div>';
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">'+
+      '<button onclick="WD.toggleKey()" style="font-size:10.5px;color:'+C.dim+';background:none;border:none;cursor:pointer;padding:0;letter-spacing:.05em">'+(s.apiKey?"◆ FMP key set":"◇ add FMP key")+' '+(s.showKey?"▲":"▼")+'</button>'+
+      (s.sample?'<span style="font-size:10px;color:'+C.gold+';font-weight:600;letter-spacing:.08em">SAMPLE DATA</span>':'')+'</div>';
+    if(s.showKey){
+      h+='<div style="background:'+C.card+';border:1.5px solid '+C.line+';border-radius:9px;padding:11px;margin-bottom:14px"><div style="font-size:10.5px;color:'+C.dim+';margin-bottom:6px">Free key at financialmodelingprep.com — 250 calls/day. Paste it here; it\'s stored only in this browser and never leaves your device. (Note: FMP\'s free tier no longer includes the financial statements, so some fields may show “—”.)</div>'+
+        '<input class="num-in" id="co-key" type="password" value="'+esc(s.apiKey)+'" placeholder="paste FMP api key" oninput="WD.setKey(this.value)" style="width:100%;font-size:13px;border:1.5px solid '+C.line+';border-radius:6px;padding:8px 10px;background:'+C.paper+'"></div>';
+    }
+    if(s.err) h+='<div style="background:#FBEDEE;border:1.5px solid '+C.red+';border-radius:9px;padding:11px;margin-bottom:14px;font-size:12px;color:'+C.red+'">'+esc(s.err)+'</div>';
+    h+='<div id="co-out">'+companyResultHTML(s.res)+'</div>';
+    document.getElementById("body").innerHTML=h;
+  }
+
+  // ==================================================================
+  // POSITIONS
+  // ==================================================================
+  function todayStr(){ return new Date().toISOString().slice(0,10); }
+  function daysBetween(a,b){ return Math.round((new Date(b)-new Date(a))/86400000); }
+  function positionStats(p){
+    var strike=num(p.strike), prem=num(p.premium), isCC=p.type==="CC";
+    var shares=isCC?(num(p.shares)||100):((num(p.contracts)||1)*100);
+    var premiumCollected=prem*shares;
+    // CSP: collateral = strike × 100 × contracts. CC: cost basis = avg cost × shares (falls back to strike).
+    var collateral=isCC?((num(p.avgCost)>0?num(p.avgCost):strike)*shares):(strike*shares);
+    var roc=collateral>0?premiumCollected/collateral:0;
+    var holdDays=Math.max(1,daysBetween(p.opened||todayStr(), p.expiration||todayStr()));
+    var weeks=holdDays/7, weekly=weeks>0?roc/weeks:0;
+    var dte=daysBetween(todayStr(), p.expiration||todayStr());
+    var annualized=roc*(365/holdDays);
+    return { collateral:collateral, premiumCollected:premiumCollected, roc:roc, weekly:weekly, annualized:annualized, dte:dte, isCC:isCC, shares:shares };
+  }
+  function renderPositions(){
+    var st=state.positions, list=st.list, f=st.form;
+    var collateral=0, premium=0, wYield=0;
+    for(var i=0;i<list.length;i++){ var s=positionStats(list[i]); collateral+=s.collateral; premium+=s.premiumCollected; wYield+=s.annualized*s.collateral; }
+    var avgYield=collateral>0?wYield/collateral:0;
+    var h='<div style="font-size:10.5px;color:'+C.dim+';letter-spacing:.14em;margin-bottom:14px">OPEN PUTS &amp; COVERED CALLS · LIVE STATS</div>';
+    h+='<div class="card card-ink" style="padding:16px 14px"><div style="display:flex;gap:14px">'+
+      '<div style="flex:1"><div style="font-size:10px;color:'+C.dim+';letter-spacing:.1em">PREMIUM COLLECTED</div><div style="font-family:'+ARCHIVO+';font-weight:800;font-size:28px;color:'+C.red+';line-height:1.1">'+fmtMoney(premium)+'</div></div>'+
+      '<div style="flex:1"><div style="font-size:10px;color:'+C.dim+';letter-spacing:.1em">AVG ANN. YIELD</div><div style="font-family:'+ARCHIVO+';font-weight:800;font-size:28px;line-height:1.1">'+fmtPct(avgYield*100,1)+'</div></div></div>'+
+      '<div style="margin-top:12px;border-top:1px solid '+C.line+';padding-top:8px;font-size:12.5px">'+row(C.blue,"Collateral at work",fmtMoney(collateral))+row(C.ink,"Open positions",String(list.length))+'</div></div>';
+    // form
+    var lbl='font-size:9.5px;color:'+C.dim+';letter-spacing:.09em';
+    var inS='font-size:14px;border:none;border-bottom:1.5px solid '+C.ink+';background:transparent;padding:3px 2px;width:100%';
+    var isCC=f.type==="CC";
+    h+='<div class="card"><div class="grp">ADD A POSITION</div>'+
+      '<div style="display:flex;gap:10px;margin-bottom:12px">'+
+      '<label style="flex:1.2"><span style="'+lbl+'">TICKER</span><input class="num-in" value="'+esc(f.ticker)+'" placeholder="AAPL" oninput="WD.setForm(\'ticker\',this.value)" style="'+inS+';text-transform:uppercase"></label>'+
+      '<label style="flex:1"><span style="'+lbl+'">TYPE</span><select onchange="WD.setFormType(this.value)" style="'+inS+';font-weight:600"><option value="CSP"'+(f.type==="CSP"?" selected":"")+'>CSP</option><option value="CC"'+(f.type==="CC"?" selected":"")+'>Cov. Call</option></select></label></div>'+
+      '<div style="display:flex;gap:10px;margin-bottom:12px">'+
+      '<label style="flex:1"><span style="'+lbl+'">'+(isCC?"CALL STRIKE $":"STRIKE $")+'</span><input class="num-in" type="number" value="'+esc(f.strike)+'" placeholder="150" oninput="WD.setForm(\'strike\',this.value)" style="'+inS+'"></label>'+
+      '<label style="flex:1"><span style="'+lbl+'">PREMIUM $/sh</span><input class="num-in" type="number" value="'+esc(f.premium)+'" placeholder="2.40" oninput="WD.setForm(\'premium\',this.value)" style="'+inS+'"></label>'+
+      (isCC?'':'<label style="flex:.8"><span style="'+lbl+'">CONTRACTS</span><input class="num-in" type="number" value="'+esc(f.contracts)+'" oninput="WD.setForm(\'contracts\',this.value)" style="'+inS+'"></label>')+
+      '</div>'+
+      (isCC?'<div style="display:flex;gap:10px;margin-bottom:12px">'+
+        '<label style="flex:1"><span style="'+lbl+'">SHARES OWNED</span><input class="num-in" type="number" value="'+esc(f.shares)+'" placeholder="100" step="100" oninput="WD.setForm(\'shares\',this.value)" style="'+inS+'"></label>'+
+        '<label style="flex:1"><span style="'+lbl+'">AVG COST $/sh</span><input class="num-in" type="number" value="'+esc(f.avgCost)+'" placeholder="140" oninput="WD.setForm(\'avgCost\',this.value)" style="'+inS+'"></label></div>':'')+
+      '<div style="display:flex;gap:10px;margin-bottom:14px">'+
+      '<label style="flex:1"><span style="'+lbl+'">OPENED</span><input class="num-in" type="date" value="'+esc(f.opened)+'" oninput="WD.setForm(\'opened\',this.value)" style="'+inS+'"></label>'+
+      '<label style="flex:1"><span style="'+lbl+'">EXPIRATION</span><input class="num-in" type="date" value="'+esc(f.expiration)+'" oninput="WD.setForm(\'expiration\',this.value)" style="'+inS+'"></label></div>'+
+      '<button onclick="WD.addPos()" style="width:100%;padding:11px 0;font-size:13px;font-weight:700;cursor:pointer;border-radius:8px;border:1.5px solid '+C.ink+';background:'+C.ink+';color:#fff">Add position</button></div>';
+    h+='<div class="grp">OPEN POSITIONS</div>';
+    if(list.length===0) h+='<div style="background:'+C.card+';border:1.5px dashed '+C.line+';border-radius:10px;padding:20px;text-align:center;font-size:12.5px;color:'+C.dim+';margin-bottom:16px">No positions yet — add one above. They save on this device.</div>';
+    for(var k=0;k<list.length;k++){ var p=list[k]; var s2=positionStats(p); var soon=s2.dte<=5;
+      h+='<div class="card" style="padding:13px"><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'+
+        '<span style="font-family:'+ARCHIVO+';font-weight:800;font-size:17px">'+esc(p.ticker)+'</span>'+
+        '<span style="font-size:10px;font-weight:600;padding:2px 6px;border-radius:4px;background:'+(p.type==="CSP"?"#E9EFF4":"#F3EBDA")+';color:'+(p.type==="CSP"?C.blue:C.gold)+'">'+p.type+'</span>'+
+        '<span style="font-size:12px;color:'+C.dim+'">$'+num(p.strike)+(s2.isCC?' · '+s2.shares+'sh':' × '+(num(p.contracts)||1))+'</span>'+
+        '<span style="flex:1"></span>'+
+        '<span style="font-size:11px;font-weight:600;color:'+(soon?C.red:C.dim)+'">'+(s2.dte<0?"expired":s2.dte+"d left")+'</span>'+
+        '<button onclick="WD.removePos('+k+')" style="background:none;border:none;color:'+C.dim+';cursor:pointer;font-size:16px;line-height:1;padding:0 2px" aria-label="remove">×</button></div>'+
+        '<div style="font-size:12px">'+row(C.gold,"Premium collected",fmtMoney(s2.premiumCollected))+row(C.blue,(s2.isCC?"Cost basis":"Collateral"),fmtMoney(s2.collateral))+row(C.red,"Return on collateral",fmtPct(s2.roc*100,2))+row(C.ink,"Per week / per year",fmtPct(s2.weekly*100,2)+"/wk · "+fmtPct(s2.annualized*100,1)+"/yr")+'</div></div>';
+    }
+    h+='<div style="font-size:10.5px;color:'+C.dim+';line-height:1.7;padding:8px 4px 0">Return on collateral = premium ÷ collateral. For puts, collateral = strike × 100 × contracts; for covered calls it\'s your cost basis (avg cost × shares). Per week divides that by the weeks from open to expiration; per year scales by 365 ÷ days held. Positions persist on this device. Not financial advice.</div>';
+    document.getElementById("body").innerHTML=h;
+  }
+
+  // ==================================================================
+  // CONTROLLER
+  // ==================================================================
+  var defCalc={ mode:"income", targetIncome:100000, accountSize:1000000, activePreset:"realistic", startAccount:150000, weeklyContrib:500, projYears:10 };
+  for(var k in PRESETS.realistic){ if(k!=="label") defCalc[k]=PRESETS.realistic[k]; }
+  var state={
+    tab:"calc",
+    calc:defCalc,
+    company:{ ticker:"", apiKey:store.get("be_fmp_key",""), showKey:false, res:SAMPLE, sample:true, loading:false, err:"" },
+    positions:{ list:store.get("be_positions",[]), form:{ ticker:"", type:"CSP", strike:"", premium:"", contracts:"1", shares:"100", avgCost:"", opened:todayStr(), expiration:"" } }
+  };
+
+  var WD={
+    setTab:function(t){ state.tab=t; renderShell(); },
+    // calc
+    setMode:function(m){ state.calc.mode=m; renderCalc(); },
+    setTarget:function(v){ if(state.calc.mode==="income") state.calc.targetIncome=v; else state.calc.accountSize=v; updateCalcOutputs(); },
+    setField:function(k,v){ state.calc[k]=v; var n=document.getElementById("f-"+k+"-num"); if(n) n.value=v; this._clearPreset(); updateCalcOutputs(); },
+    setNum:function(k,v){ state.calc[k]=v; var r=document.getElementById("f-"+k+"-range"); if(r) r.value=v; this._clearPreset(); updateCalcOutputs(); },
+    setProj:function(k,v){ state.calc[k]=v; updateCalcOutputs(); },
+    applyPreset:function(id){ var p=PRESETS[id]; for(var k in p){ if(k!=="label") state.calc[k]=p[k]; } state.calc.activePreset=id; renderCalc(); },
+    _clearPreset:function(){ if(state.calc.activePreset){ state.calc.activePreset=null; var el=document.getElementById("calc-presets"); if(el) el.outerHTML=presetsHTML(state.calc); } },
+    // company
+    setTicker:function(v){ state.company.ticker=v; },
+    setKey:function(v){ state.company.apiKey=v; store.set("be_fmp_key",v); },
+    toggleKey:function(){ state.company.showKey=!state.company.showKey; renderCompany(); },
+    scan:function(){
+      var s=state.company, sym=(s.ticker||"").trim().toUpperCase();
+      if(!sym) return;
+      var local=useProxy();
+      if(!local && !(s.apiKey||"").trim()){ s.err="Add your free FMP key below to pull live data (financialmodelingprep.com — 250 calls/day, free)."; s.showKey=true; renderCompany(); return; }
+      s.loading=true; s.err=""; renderCompany();
+      fetchFundamentals(sym, (s.apiKey||"").trim()).then(function(r){ s.res=r; s.sample=false; s.loading=false; renderCompany(); })
+        .catch(function(e){
+          s.loading=false;
+          var m=e.message||String(e);
+          var net=(e instanceof TypeError)||/Failed to fetch|Load failed|NetworkError|ERR_/i.test(m);
+          if(net && location.protocol==="file:"){ s.err="Your browser blocked the live lookup because the app is open as a local file. Open the hosted link instead (or use “Open Wheel Desk.command”). The Calculator and Positions tabs work either way."; }
+          else if(net){ s.err="Couldn't reach FMP just now — your browser may be blocking the cross-site request, or FMP is momentarily down. Try again in a moment."; }
+          else if(/402/.test(m)){ s.err="FMP wouldn't return "+sym+"'s statements on your current plan (HTTP 402). The free tier limits some data — this loads whatever your plan allows."; }
+          else { s.err="Couldn't load "+sym+": "+m+" — usually a wrong key or the free 250/day limit."; }
+          renderCompany();
+        });
+    },
+    // positions
+    setForm:function(k,v){ state.positions.form[k]=v; },
+    setFormType:function(v){ state.positions.form.type=v; renderPositions(); },
+    addPos:function(){
+      var f=state.positions.form;
+      if(!(f.ticker||"").trim()||!num(f.strike)||!f.expiration) return;
+      var id=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():String(Math.floor(performance.now()*1000));
+      var rec={ ticker:f.ticker.trim().toUpperCase(), type:f.type, strike:f.strike, premium:f.premium, contracts:f.contracts, shares:f.shares, avgCost:f.avgCost, opened:f.opened, expiration:f.expiration, id:id };
+      state.positions.list.push(rec);
+      store.set("be_positions", state.positions.list);
+      state.positions.form={ ticker:"", type:"CSP", strike:"", premium:"", contracts:"1", shares:"100", avgCost:"", opened:todayStr(), expiration:"" };
+      renderPositions();
+    },
+    removePos:function(idx){ state.positions.list.splice(idx,1); store.set("be_positions", state.positions.list); renderPositions(); }
+  };
+  window.WD=WD;
+
+  // ==================================================================
+  // SHELL
+  // ==================================================================
+  var TABS=[{id:"calc",label:"Calculator"},{id:"company",label:"Company"},{id:"positions",label:"Positions"}];
+  function renderShell(){
+    var logo='<svg width="40" height="40" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="19" fill="#fff" stroke="'+C.ink+'" stroke-width="1.5"/><circle cx="20" cy="20" r="13" fill="none" stroke="'+C.blue+'" stroke-width="3"/><circle cx="20" cy="20" r="7" fill="none" stroke="'+C.red+'" stroke-width="3"/><circle cx="20" cy="20" r="3" fill="'+C.gold+'"/></svg>';
+    var tabs='<div style="display:flex;gap:6px;margin-bottom:18px;background:'+C.card+';border:1.5px solid '+C.ink+';border-radius:8px;padding:4px">';
+    for(var i=0;i<TABS.length;i++){ var on=state.tab===TABS[i].id;
+      tabs+='<button onclick="WD.setTab(\''+TABS[i].id+'\')" style="flex:1;padding:9px 0;font-size:12.5px;font-weight:600;cursor:pointer;border-radius:5px;border:none;background:'+(on?C.ink:"transparent")+';color:'+(on?"#fff":C.ink)+'">'+TABS[i].label+'</button>';
+    }
+    tabs+='</div>';
+    document.getElementById("root").innerHTML=
+      '<div style="max-width:480px;margin:0 auto;padding:20px 16px 48px">'+
+      '<header style="display:flex;align-items:center;gap:12px;margin-bottom:16px">'+logo+
+      '<h1 style="font-family:'+ARCHIVO+';font-weight:800;font-size:24px;letter-spacing:-.02em;margin:0;line-height:1">BULLS EYE <span style="color:'+C.red+'">DESK</span></h1></header>'+
+      tabs+'<div id="body"></div></div>';
+    if(state.tab==="calc") renderCalc();
+    else if(state.tab==="company") renderCompany();
+    else renderPositions();
+  }
+
+  renderShell();
+})();
+</script>
+</body>
+</html>
